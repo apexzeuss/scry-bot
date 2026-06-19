@@ -8,6 +8,8 @@ Claude Code setup.
 It imports the **same** `scanWallet()` logic the skill uses, so the bot's output
 matches the skill's exactly. This is a demo layer, not a separate product.
 
+**Try it live: [@scry_intel_bot](https://t.me/scry_intel_bot)** — send `/demo`.
+
 ## Commands
 
 - `/demo` — scans a known-safe and a known-risky wallet so you can see the value
