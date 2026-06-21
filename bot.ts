@@ -278,6 +278,23 @@ async function handleScan(rawAddress: string): Promise<string> {
   }
 }
 
+/** Explicit token rug check (the /token command and 🪙 button). */
+async function handleToken(rawAddress: string): Promise<string> {
+  const address = rawAddress.trim().split(/\s+/)[0];
+  if (!address) {
+    return "🪙 Paste the token's mint address and I'll rug-check it.";
+  }
+  try {
+    const token = await scanTokenFull(address, process.env.SOLANA_RPC_URL);
+    if (!token) {
+      return "That doesn't look like a token mint. If it's a wallet, use /scan or just paste it. 🙂";
+    }
+    return formatTokenReport(token);
+  } catch (err: any) {
+    return `Hmm, I couldn't read that token. Double-check the mint address?\n\n<i>(${esc(err?.message ?? String(err))})</i>`;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // /watch — watch live for a duration, streaming flags as they appear
 // ---------------------------------------------------------------------------
@@ -391,6 +408,7 @@ const noPreview = { link_preview_options: { is_disabled: true } } as const;
 // Tappable main menu so users don't have to know any commands.
 const mainMenu = Markup.inlineKeyboard([
   [Markup.button.callback("🔍 Scan a wallet", "scan_prompt")],
+  [Markup.button.callback("🪙 Check a token", "token_prompt")],
   [Markup.button.callback("See a quick demo", "demo")],
   [Markup.button.callback("👀 Watch new tokens", "watch_menu")],
   [Markup.button.callback("How it works", "help")],
@@ -413,7 +431,8 @@ function welcomeText(name?: string): string {
 
 const HELP_TEXT =
   "<b>How Scry works</b>\n\n" +
-  "<b>Scan a wallet or token</b> — paste any Solana wallet (0-100 risk score) or token mint (rug check: can it freeze or mint?), in plain English.\n\n" +
+  "<b>Scan a wallet</b> — paste a wallet address for a 0-100 risk score.\n" +
+  "<b>Check a token</b> — paste a token mint for a rug check (freeze, mint, liquidity, holders, deployer).\n\n" +
   "<b>See a demo</b> — I scan one healthy wallet and one risky one so you can see the difference.\n\n" +
   "<b>Watch new tokens</b> — I watch new launches live and ping you when one looks like a rug or honeypot.\n\n" +
   "<i>A gut-check from public Solana data, not financial advice.</i>";
@@ -494,6 +513,7 @@ async function main() {
   bot.telegram
     .setMyCommands([
       { command: "scan", description: "Check a Solana wallet's safety" },
+      { command: "token", description: "Rug-check a token mint" },
       { command: "demo", description: "See a quick example" },
       { command: "watch", description: "Watch for risky new tokens" },
       { command: "stop", description: "Stop watching" },
@@ -511,7 +531,14 @@ async function main() {
   bot.action("scan_prompt", async (ctx) => {
     await ctx.answerCbQuery();
     await ctx.replyWithHTML(
-      "👇 Paste any Solana wallet or token address and I'll check it for you.",
+      "👇 Paste a Solana wallet address and I'll score it.",
+      noPreview,
+    );
+  });
+  bot.action("token_prompt", async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.replyWithHTML(
+      "🪙 Paste a token's mint address and I'll rug-check it.",
       noPreview,
     );
   });
@@ -540,6 +567,11 @@ async function main() {
     const arg = ctx.message.text.replace(/^\/scan(@\w+)?/, "").trim();
     await ctx.replyWithChatAction("typing");
     await ctx.replyWithHTML(await handleScan(arg), noPreview);
+  });
+  bot.command("token", async (ctx) => {
+    const arg = ctx.message.text.replace(/^\/token(@\w+)?/, "").trim();
+    await ctx.replyWithChatAction("typing");
+    await ctx.replyWithHTML(await handleToken(arg), noPreview);
   });
   bot.command("demo", (ctx) => runDemo(ctx));
   bot.command("watch", async (ctx) => {
