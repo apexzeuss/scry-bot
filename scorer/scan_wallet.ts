@@ -422,6 +422,7 @@ export async function scanWallet(
     components: score.components,
     summary: buildSummary(score.risk_level, score.risk_score, {
       ageDays,
+      isLowerBound,
       txCount: windowSigs.length,
       distinctPrograms,
       washScore,
@@ -440,6 +441,7 @@ function buildSummary(
   score: number,
   s: {
     ageDays: number;
+    isLowerBound: boolean;
     txCount: number;
     distinctPrograms: number;
     washScore: number;
@@ -450,8 +452,11 @@ function buildSummary(
 ): string {
   const parts: string[] = [];
   parts.push(`${level.toUpperCase()} risk (${score}/100).`);
+  const ageText = s.isLowerBound
+    ? `at least ~${s.ageDays}d of recent history`
+    : `~${s.ageDays}d old`;
   parts.push(
-    `~${s.ageDays}d old, ${s.txCount} sampled txns across ${s.distinctPrograms} distinct programs.`,
+    `${ageText}, ${s.txCount} sampled txns across ${s.distinctPrograms} distinct programs.`,
   );
   if (s.washScore >= 0.5)
     parts.push(`High counterparty concentration (${Math.round(s.washScore * 100)}%).`);
