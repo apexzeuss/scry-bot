@@ -192,14 +192,14 @@ interface ActiveWatch {
   count: number;
 }
 
-const DEFAULT_WATCH_MS = 15 * 60 * 1000;
+const DEFAULT_WATCH_MS = 30 * 60 * 1000; // matches the 30 min button + /watch 30m example
 const MAX_WATCH_MS = 60 * 60 * 1000;
 const activeWatches = new Map<number, ActiveWatch>();
 
 /** Parse "30m" / "1h" / "45s" / bare number (minutes). */
 function parseDuration(arg: string): { ms: number; label: string } {
   const m = arg.trim().match(/^(\d+)\s*(s|m|h)?$/i);
-  if (!m) return { ms: DEFAULT_WATCH_MS, label: "15 minutes" };
+  if (!m) return { ms: DEFAULT_WATCH_MS, label: "30 minutes" };
   const n = parseInt(m[1], 10);
   const unit = (m[2] ?? "m").toLowerCase();
   const mult = unit === "s" ? 1000 : unit === "h" ? 3600_000 : 60_000;
