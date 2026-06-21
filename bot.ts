@@ -15,7 +15,7 @@
  */
 
 import "dotenv/config";
-import { Telegraf } from "telegraf";
+import { Telegraf, Markup } from "telegraf";
 // Vendored copy of the skill's scorer so the bot is self-contained and
 // deployable on its own. Refresh it with `npm run sync-scorer`.
 import { scanWallet, WalletRiskReport } from "./scorer/scan_wallet.ts";
@@ -290,13 +290,70 @@ async function selfTest() {
 // Entry
 // ---------------------------------------------------------------------------
 
-const WELCOME =
-  "🔮 <b>Hey, I'm Scry.</b>\n\n" +
-  "I check Solana wallets so you don't get rugged.\n\n" +
-  "Paste me any wallet address and I'll tell you, in plain English, " +
-  "whether it looks safe. That's it.\n\n" +
-  "👉 New here? Send <b>/demo</b> to see it in action.\n" +
-  "Want to catch risky new tokens as they launch? Try <b>/watch 30m</b>.";
+const noPreview = { link_preview_options: { is_disabled: true } } as const;
+
+// Tappable main menu so users don't have to know any commands.
+const mainMenu = Markup.inlineKeyboard([
+  [Markup.button.callback("🔍 Scan a wallet", "scan_prompt")],
+  [Markup.button.callback("🎬 See a quick demo", "demo")],
+  [Markup.button.callback("👀 Watch new tokens", "watch_menu")],
+  [Markup.button.callback("❓ How it works", "help")],
+]);
+
+const watchMenu = Markup.inlineKeyboard([
+  [
+    Markup.button.callback("5 min", "watch:5"),
+    Markup.button.callback("30 min", "watch:30"),
+    Markup.button.callback("1 hour", "watch:60"),
+  ],
+]);
+
+function welcomeText(name?: string): string {
+  const who = name ? ` ${name}` : "";
+  return (
+    `🔮 <b>Hey${who}! 👋</b>\n\n` +
+    "I'm <b>Scry</b>. I check Solana wallets and tokens so you don't get rugged.\n\n" +
+    "What would you like to do?"
+  );
+}
+
+const HELP_TEXT =
+  "🔮 <b>How Scry works</b>\n\n" +
+  "🔍 <b>Scan a wallet</b> — paste any Solana address and I'll tell you, in plain English, whether it looks safe (0-100 risk score).\n\n" +
+  "🎬 <b>See a demo</b> — I scan one healthy wallet and one risky one so you can see the difference.\n\n" +
+  "👀 <b>Watch new tokens</b> — I watch new launches live and ping you when one looks like a rug or honeypot.\n\n" +
+  "<i>A gut-check from public Solana data, not financial advice.</i> 💙";
+
+// Reusable flows so both commands and button taps share one code path.
+async function runDemo(ctx: any) {
+  await ctx.replyWithHTML(
+    "Here are two real wallets so you can see the difference. 👇",
+    noPreview,
+  );
+  await ctx.replyWithChatAction("typing");
+  await ctx.replyWithHTML("<b>1. A wallet with a long, healthy history</b>", noPreview);
+  await ctx.replyWithHTML(await handleScan(DEMO_SAFE), noPreview);
+  await ctx.replyWithChatAction("typing");
+  await ctx.replyWithHTML(
+    "<b>2. A brand-new wallet that just deployed a token</b>",
+    noPreview,
+  );
+  await ctx.replyWithHTML(await handleScan(DEMO_RISKY), noPreview);
+  await ctx.replyWithHTML(
+    "Want to check your own? Just paste any Solana wallet address. 🙂",
+    noPreview,
+  );
+}
+
+async function beginWatch(ctx: any, minutes: number) {
+  const ms = Math.min(Math.max(minutes, 1), 60) * 60_000;
+  await ctx.replyWithHTML(
+    `👀 Watching for risky new tokens for the next <b>${humanize(ms)}</b>.\n` +
+      "I'll ping you the moment I spot one. (Tap /stop to end early.)",
+    noPreview,
+  );
+  startWatch(ctx.chat.id, ms, (html: string) => ctx.replyWithHTML(html, noPreview));
+}
 
 /** Run the watcher for a few seconds and print flags (verify without Telegram). */
 async function watchTest() {
@@ -337,53 +394,70 @@ async function main() {
   }
 
   const bot = new Telegraf(token);
-  const noPreview = { link_preview_options: { is_disabled: true } } as const;
+  const menu = { ...noPreview, ...mainMenu };
 
-  bot.start((ctx) => ctx.replyWithHTML(WELCOME, noPreview));
-  bot.help((ctx) => ctx.replyWithHTML(WELCOME, noPreview));
+  // Populate the "/" command menu so typing "/" shows the options.
+  bot.telegram
+    .setMyCommands([
+      { command: "scan", description: "Check a Solana wallet's safety" },
+      { command: "demo", description: "See a quick example" },
+      { command: "watch", description: "Watch for risky new tokens" },
+      { command: "stop", description: "Stop watching" },
+      { command: "help", description: "How Scry works" },
+    ])
+    .catch(() => {});
 
+  // Personalized, button-driven welcome.
+  bot.start((ctx) =>
+    ctx.replyWithHTML(welcomeText(ctx.from?.first_name), menu),
+  );
+  bot.help((ctx) => ctx.replyWithHTML(HELP_TEXT, menu));
+
+  // ---- Button taps ----
+  bot.action("scan_prompt", async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.replyWithHTML(
+      "👇 Paste any Solana wallet address and I'll check it for you.",
+      noPreview,
+    );
+  });
+  bot.action("demo", async (ctx) => {
+    await ctx.answerCbQuery();
+    await runDemo(ctx);
+  });
+  bot.action("help", async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.replyWithHTML(HELP_TEXT, menu);
+  });
+  bot.action("watch_menu", async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.replyWithHTML(
+      "👀 How long should I watch for risky new tokens?",
+      { ...noPreview, ...watchMenu },
+    );
+  });
+  bot.action(/^watch:(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    await beginWatch(ctx, Number(ctx.match[1]));
+  });
+
+  // ---- Typed commands (still work for power users) ----
   bot.command("scan", async (ctx) => {
     const arg = ctx.message.text.replace(/^\/scan(@\w+)?/, "").trim();
     await ctx.replyWithChatAction("typing");
     await ctx.replyWithHTML(await handleScan(arg), noPreview);
   });
-
-  // /demo — scan a known-safe and a known-risky wallet so judges see it instantly.
-  bot.command("demo", async (ctx) => {
-    await ctx.replyWithHTML(
-      "Here are two real wallets so you can see the difference. 👇",
-      noPreview,
-    );
-    await ctx.replyWithChatAction("typing");
-    await ctx.replyWithHTML(
-      "<b>1. A wallet with a long, healthy history</b>",
-      noPreview,
-    );
-    await ctx.replyWithHTML(await handleScan(DEMO_SAFE), noPreview);
-    await ctx.replyWithChatAction("typing");
-    await ctx.replyWithHTML(
-      "<b>2. A brand-new wallet that just deployed a token</b>",
-      noPreview,
-    );
-    await ctx.replyWithHTML(await handleScan(DEMO_RISKY), noPreview);
-    await ctx.replyWithHTML(
-      "Now try your own: just paste any Solana wallet address. 🙂",
-      noPreview,
-    );
-  });
-
+  bot.command("demo", (ctx) => runDemo(ctx));
   bot.command("watch", async (ctx) => {
     const arg = ctx.message.text.replace(/^\/watch(@\w+)?/, "").trim();
     const { ms, label } = parseDuration(arg);
-    const chatId = ctx.chat.id;
     await ctx.replyWithHTML(
       `👀 Watching for risky new tokens for the next <b>${label}</b>.\n` +
         "I'll ping you the moment I spot one. (Send /stop to end early.)",
       noPreview,
     );
-    startWatch(chatId, ms, (html) => ctx.replyWithHTML(html, noPreview));
+    startWatch(ctx.chat.id, ms, (html) => ctx.replyWithHTML(html, noPreview));
   });
-
   bot.command("stop", async (ctx) => {
     const was = activeWatches.has(ctx.chat.id);
     stopWatch(ctx.chat.id);
