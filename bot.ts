@@ -19,7 +19,13 @@ import { Telegraf, Markup } from "telegraf";
 // Vendored copy of the skill's scorer so the bot is self-contained and
 // deployable on its own. Refresh it with `npm run sync-scorer`.
 import { scanWallet, WalletRiskReport } from "./scorer/scan_wallet.ts";
-import { watchDeployments, WatchController, WatchFlag } from "./watcher.ts";
+import {
+  watchDeployments,
+  WatchController,
+  WatchFlag,
+  scanToken,
+  TokenRisk,
+} from "./watcher.ts";
 
 const ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
@@ -167,18 +173,82 @@ function formatReport(r: WalletRiskReport): string {
   return lines.join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// Token report (when the pasted address is a token mint, not a wallet)
+// ---------------------------------------------------------------------------
+
+function formatTokenReport(mint: string, t: TokenRisk): string {
+  let score = 0;
+  if (t.freeze_authority_active) score += 50;
+  if (t.mint_authority_active) score += 30;
+  if (t.top_holder_pct >= 0.9) score += 20;
+  else if (t.top_holder_pct >= 0.5) score += 10;
+
+  const head =
+    score >= 50 ? "🔴 Risky token" : score >= 25 ? "🟡 Some risk" : "🟢 Looks clean";
+  const sub =
+    score >= 50
+      ? "The creator kept powers that can be used to rug holders."
+      : score >= 25
+        ? "The creator kept at least one power worth knowing about."
+        : "The creator gave up the powers that enable rugs.";
+
+  const pct = Math.round(t.top_holder_pct * 100);
+  const bad: string[] = [];
+  const good: string[] = [];
+  if (t.freeze_authority_active)
+    bad.push("⚠️  Creator can freeze your tokens (you couldn't sell — honeypot risk)");
+  else good.push("✅  Can't freeze your tokens (freeze authority revoked)");
+  if (t.mint_authority_active)
+    bad.push("⚠️  Creator can still mint unlimited new supply (can dilute you)");
+  else good.push("✅  Supply is capped (mint authority revoked)");
+  if (t.top_holder_pct >= 0.9)
+    bad.push(`⚠️  ~${pct}% of supply sits in one wallet (normal right after launch, risky once trading)`);
+  else if (t.top_holder_pct >= 0.5)
+    bad.push(`⚠️  ~${pct}% of supply held by one wallet`);
+
+  const lines = [
+    `<b>${head}</b>`,
+    sub,
+    "",
+    "<b>What I found:</b>",
+    ...bad,
+    ...good,
+    "",
+    "<b>📊 The data</b>",
+    `• Token: <code>${esc(mint)}</code>`,
+    `• Freeze authority: ${t.freeze_authority_active ? "active" : "revoked"}`,
+    `• Mint authority: ${t.mint_authority_active ? "active" : "revoked"}`,
+    `• Largest holder: ${pct}% of supply`,
+  ];
+  if (t.freeze_authority_active || t.mint_authority_active) {
+    lines.push(
+      "",
+      "<i>Note: a few legit tokens (e.g. regulated stablecoins) keep these powers on purpose. For a random new token, they're red flags.</i>",
+    );
+  }
+  lines.push(
+    "",
+    "<i>On-chain facts, not financial advice. Always do your own research too.</i>",
+  );
+  return lines.join("\n");
+}
+
 async function handleScan(rawAddress: string): Promise<string> {
   const address = rawAddress.trim().split(/\s+/)[0];
   if (!address) {
-    return "Send me a Solana wallet address and I'll check it. 🙂";
+    return "Send me a Solana wallet or token address and I'll check it. 🙂";
   }
   try {
+    // If it's a token mint, give the token rug check; otherwise score the wallet.
+    const token = await scanToken(address, process.env.SOLANA_RPC_URL);
+    if (token) return formatTokenReport(address, token);
     const report = await scanWallet(address, {
       rpcUrl: process.env.SOLANA_RPC_URL,
     });
     return formatReport(report);
   } catch (err: any) {
-    return `Hmm, I couldn't read that one. Double-check it's a Solana wallet address?\n\n<i>(${esc(err?.message ?? String(err))})</i>`;
+    return `Hmm, I couldn't read that one. Double-check it's a Solana wallet or token address?\n\n<i>(${esc(err?.message ?? String(err))})</i>`;
   }
 }
 
@@ -317,7 +387,7 @@ function welcomeText(name?: string): string {
 
 const HELP_TEXT =
   "<b>How Scry works</b>\n\n" +
-  "<b>Scan a wallet</b> — paste any Solana address and I'll tell you, in plain English, whether it looks safe (0-100 risk score).\n\n" +
+  "<b>Scan a wallet or token</b> — paste any Solana wallet (0-100 risk score) or token mint (rug check: can it freeze or mint?), in plain English.\n\n" +
   "<b>See a demo</b> — I scan one healthy wallet and one risky one so you can see the difference.\n\n" +
   "<b>Watch new tokens</b> — I watch new launches live and ping you when one looks like a rug or honeypot.\n\n" +
   "<i>A gut-check from public Solana data, not financial advice.</i>";
@@ -415,7 +485,7 @@ async function main() {
   bot.action("scan_prompt", async (ctx) => {
     await ctx.answerCbQuery();
     await ctx.replyWithHTML(
-      "👇 Paste any Solana wallet address and I'll check it for you.",
+      "👇 Paste any Solana wallet or token address and I'll check it for you.",
       noPreview,
     );
   });

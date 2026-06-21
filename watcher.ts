@@ -112,6 +112,41 @@ async function inspectToken(
   }
 }
 
+/**
+ * Scan a single address as a token mint. Returns null if it isn't a mint
+ * (a wallet, a token account, or an invalid/unknown address) so the caller can
+ * fall back to wallet scoring.
+ */
+export async function scanToken(
+  mint: string,
+  rpcUrl?: string,
+): Promise<TokenRisk | null> {
+  try {
+    const conn = new Connection(rpcUrl || DEFAULT_RPC, "confirmed");
+    const mintKey = new PublicKey(mint);
+    const info: any = await conn.getParsedAccountInfo(mintKey);
+    const data = info.value?.data;
+    if (data?.parsed?.type !== "mint") return null; // not a token mint
+    const parsed = data.parsed.info;
+    const supply = Number(parsed.supply ?? 0);
+    let topHolderPct = 0;
+    try {
+      const largest = await conn.getTokenLargestAccounts(mintKey);
+      const top = largest.value?.[0]?.amount;
+      if (top && supply > 0) topHolderPct = Number(top) / supply;
+    } catch {
+      /* concentration optional */
+    }
+    return {
+      mint_authority_active: parsed.mintAuthority != null,
+      freeze_authority_active: parsed.freezeAuthority != null,
+      top_holder_pct: Math.round(topHolderPct * 100) / 100,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Token-level red flags worth surfacing (authorities, not launch concentration). */
 function tokenRedFlags(t: TokenRisk): string[] {
   const r: string[] = [];
