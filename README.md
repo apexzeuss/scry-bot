@@ -19,7 +19,7 @@ not a separate product.
   You can also just paste a wallet address with no command. Responses include
   risk, confidence, signal coverage, and plain-language reasons.
 - `/watch [time]` — watch live for risky new tokens for a duration, e.g.
-  `/watch 30m`, `/watch 1h` (default 15 minutes). Pings the chat as risky
+  `/watch 30m`, `/watch 1h` (default 30 minutes). Pings the chat as risky
   tokens launch, then sends a wrap-up. `/stop` ends it early.
 - `/help` — usage.
 
@@ -28,13 +28,15 @@ not a separate product.
 ```
 scry-bot/
   bot.ts            entry point (telegraf)
-  .env.example      BOT_TOKEN, SOLANA_RPC_URL, SKILL_DIR
+  watcher.ts        in-process token watcher for /watch
+  scorer/           vendored copy of the skill scorer
+  .env.example      BOT_TOKEN, SOLANA_RPC_URL
   package.json
   README.md
 ```
 
-It expects the skill repo as a **sibling directory** (`../scry-skill`).
-Override with `SKILL_DIR` in `.env` if it lives elsewhere.
+The bot is self-contained for deployment: it ships a vendored scorer in
+`scorer/` and an in-process watcher in `watcher.ts`.
 
 ## Setup
 
