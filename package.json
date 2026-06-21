@@ -8,7 +8,8 @@
     "start": "tsx bot.ts",
     "selftest": "tsx bot.ts --selftest",
     "typecheck": "tsc --noEmit",
-    "sync-scorer": "cp ../scry-skill/scripts/scan_wallet.ts scorer/scan_wallet.ts"
+    "sync-scorer": "cp ../scry-skill/scripts/scan_wallet.ts scorer/scan_wallet.ts",
+    "check-scorer-sync": "cmp scorer/scan_wallet.ts ../scry-skill/scripts/scan_wallet.ts"
   },
   "dependencies": {
     "@solana/web3.js": "^1.95.3",

@@ -15,20 +15,11 @@
  */
 
 import "dotenv/config";
-import { spawn, ChildProcess } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { Telegraf } from "telegraf";
 // Vendored copy of the skill's scorer so the bot is self-contained and
 // deployable on its own. Refresh it with `npm run sync-scorer`.
 import { scanWallet, WalletRiskReport } from "./scorer/scan_wallet.ts";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SKILL_DIR = path.resolve(
-  __dirname,
-  process.env.SKILL_DIR ?? "../scry-skill",
-);
-const TSX_BIN = path.join(SKILL_DIR, "node_modules", ".bin", "tsx");
+import { watchDeployments, WatchController, WatchFlag } from "./watcher.ts";
 
 const ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
@@ -149,6 +140,7 @@ function detailsBlock(r: WalletRiskReport): string[] {
   return [
     "<b>📊 The data</b>",
     `• Wallet: <code>${esc(r.address)}</code>`,
+    `• Confidence: ${r.confidence} (${r.signals_available}/${r.signals_total} signals${r.rpc_degraded ? ", RPC degraded" : ""})`,
     `• Age: ${age}`,
     `• Transactions seen: ${s.tx_count_sampled.toLocaleString()}`,
     `• Different apps used: ${samplingOff ? notChecked : s.distinct_programs}`,
@@ -194,16 +186,8 @@ async function handleScan(rawAddress: string): Promise<string> {
 // /watch — watch live for a duration, streaming flags as they appear
 // ---------------------------------------------------------------------------
 
-interface FlaggedDeployment {
-  deployment_address: string;
-  deployer: string;
-  deployer_risk_score: number;
-  deployer_risk_level: string;
-  flag_reason: string;
-}
-
 interface ActiveWatch {
-  child: ChildProcess;
+  controller: WatchController;
   timer: NodeJS.Timeout;
   count: number;
 }
@@ -236,20 +220,21 @@ function humanize(ms: number): string {
   return `${total} seconds`;
 }
 
-function formatFlag(f: FlaggedDeployment): string {
-  const emoji = f.deployer_risk_level === "high" ? "🔴" : "🟡";
-  return [
-    `${emoji} <b>New token worth a second look</b>`,
-    `<code>${esc(shortAddr(f.deployment_address))}</code>`,
-    `Made by a wallet scoring <b>${f.deployer_risk_score}/100</b> (${f.deployer_risk_level} risk).`,
-  ].join("\n");
+function formatFlag(f: WatchFlag): string {
+  const lines = [
+    `🚩 <b>New risky token just launched</b>`,
+    `<code>${esc(shortAddr(f.mint))}</code>`,
+    "",
+    ...f.reasons,
+  ];
+  return lines.join("\n");
 }
 
 function stopWatch(chatId: number) {
   const w = activeWatches.get(chatId);
   if (!w) return;
   clearTimeout(w.timer);
-  w.child.kill("SIGINT");
+  w.controller.stop();
   activeWatches.delete(chatId);
 }
 
@@ -258,43 +243,19 @@ type Send = (html: string) => Promise<unknown>;
 function startWatch(chatId: number, ms: number, send: Send) {
   stopWatch(chatId); // one watch per chat
 
-  const child = spawn(
-    TSX_BIN,
-    [
-      "scripts/watch_deployments.ts",
-      "--tokens-only",
-      "--min-score",
-      "50",
-      "--interval",
-      "15",
-      "--json",
-    ],
-    { cwd: SKILL_DIR, env: { ...process.env } },
+  const controller = watchDeployments(
+    { rpcUrl: process.env.SOLANA_RPC_URL, durationMs: ms, minScore: 67 },
+    (flag) => {
+      const w = activeWatches.get(chatId);
+      if (w) w.count++;
+      void send(formatFlag(flag));
+    },
   );
 
-  const watch: ActiveWatch = {
-    child,
+  activeWatches.set(chatId, {
+    controller,
     count: 0,
     timer: setTimeout(() => finish(chatId, send), ms),
-  };
-  activeWatches.set(chatId, watch);
-
-  let buffer = "";
-  child.stdout?.on("data", (d: Buffer) => {
-    buffer += d.toString();
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const t = line.trim();
-      if (!t.startsWith("{")) continue;
-      try {
-        const flag: FlaggedDeployment = JSON.parse(t);
-        watch.count++;
-        void send(formatFlag(flag));
-      } catch {
-        /* ignore non-JSON noise */
-      }
-    }
   });
 }
 
@@ -335,11 +296,34 @@ const WELCOME =
   "Paste me any wallet address and I'll tell you, in plain English, " +
   "whether it looks safe. That's it.\n\n" +
   "👉 New here? Send <b>/demo</b> to see it in action.\n" +
-  "Want to catch sketchy new tokens as they launch? Try <b>/watch 30m</b>.";
+  "Want to catch risky new tokens as they launch? Try <b>/watch 30m</b>.";
+
+/** Run the watcher for a few seconds and print flags (verify without Telegram). */
+async function watchTest() {
+  const secs = Number(
+    process.argv[process.argv.indexOf("--watchtest") + 1] || 45,
+  );
+  console.log(`[watchtest] watching live for ${secs}s...\n`);
+  let n = 0;
+  const ctrl = watchDeployments(
+    { rpcUrl: process.env.SOLANA_RPC_URL, durationMs: secs * 1000, minScore: 67 },
+    (f) => {
+      n++;
+      console.log(`🚩 ${f.mint}\n   ${f.reasons.join("\n   ")}\n`);
+    },
+  );
+  await new Promise((r) => setTimeout(r, secs * 1000 + 1500));
+  ctrl.stop();
+  console.log(`[watchtest] done. ${n} risky token(s) flagged.`);
+}
 
 async function main() {
   if (process.argv.includes("--selftest")) {
     await selfTest();
+    return;
+  }
+  if (process.argv.includes("--watchtest")) {
+    await watchTest();
     return;
   }
 

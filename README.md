@@ -5,8 +5,9 @@ A thin **Telegram demo bot** for
 (judges, testers) try the skill's wallet risk scoring live in chat, with no
 Claude Code setup.
 
-It imports the **same** `scanWallet()` logic the skill uses, so the bot's output
-matches the skill's exactly. This is a demo layer, not a separate product.
+It vendors the **same** `scanWallet()` logic the skill uses, so the bot's output
+matches the skill's exactly after `npm run sync-scorer`. This is a demo layer,
+not a separate product.
 
 **Try it live: [@scry_intel_bot](https://t.me/scry_intel_bot)** — send `/demo`.
 
@@ -15,7 +16,8 @@ matches the skill's exactly. This is a demo layer, not a separate product.
 - `/demo` — scans a known-safe and a known-risky wallet so you can see the value
   with zero setup. Best first command.
 - `/scan <wallet>` — plain-English safety check for a Solana wallet (0-100).
-  You can also just paste a wallet address with no command.
+  You can also just paste a wallet address with no command. Responses include
+  risk, confidence, signal coverage, and plain-language reasons.
 - `/watch [time]` — watch live for risky new tokens for a duration, e.g.
   `/watch 30m`, `/watch 1h` (default 15 minutes). Pings the chat as risky
   tokens launch, then sends a wrap-up. `/stop` ends it early.

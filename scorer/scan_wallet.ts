@@ -58,6 +58,10 @@ export interface WalletRiskReport {
   address: string;
   risk_score: number; // 0-100
   risk_level: "low" | "medium" | "high";
+  confidence: "low" | "medium" | "high";
+  signals_available: number;
+  signals_total: number;
+  rpc_degraded: boolean;
   signals: {
     account_age_days: number;
     account_age_is_lower_bound: boolean;
@@ -71,6 +75,30 @@ export interface WalletRiskReport {
   components: Record<keyof typeof WEIGHTS, number>; // each 0-1, pre-weight
   summary: string;
   notes: string[];
+}
+
+type ComponentKey = keyof typeof WEIGHTS;
+
+export interface ScoreInputs {
+  ageDays: number;
+  isLowerBound: boolean;
+  txCount: number;
+  failedRatio: number;
+  distinctPrograms: number;
+  washScore: number;
+  dumpScore: number;
+  txSamplingAvailable: boolean;
+}
+
+export interface ScoreResult {
+  risk_score: number;
+  risk_level: WalletRiskReport["risk_level"];
+  confidence: WalletRiskReport["confidence"];
+  signals_available: number;
+  signals_total: number;
+  rpc_degraded: boolean;
+  active_components: ComponentKey[];
+  components: Record<ComponentKey, number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +256,58 @@ function diversityRisk(distinctPrograms: number): number {
   return clamp01(1 - (distinctPrograms - 1) / (8 - 1));
 }
 
+export function scoreWalletSignals(input: ScoreInputs): ScoreResult {
+  const components = {
+    age: ageRisk(input.ageDays),
+    activity: activityRisk(input.txCount, input.failedRatio),
+    diversity: diversityRisk(input.distinctPrograms),
+    wash: clamp01(input.washScore),
+    dump: clamp01(input.dumpScore),
+  };
+
+  // Maturity dampener: for clearly established/high-volume wallets, the wash and
+  // diversity signals (read from only a 25-tx sample) are noisy and false-positive
+  // on legit bots / power users who lean on one app. A wallet with a deep history
+  // has already proven it isn't a throwaway, so soften those two signals.
+  const established = input.isLowerBound || input.txCount >= 200;
+  if (established) {
+    components.wash *= 0.5;
+    components.diversity *= 0.5;
+  }
+
+  // Renormalize over only the available signals so a missing input doesn't
+  // silently drag the score toward zero.
+  const active: ComponentKey[] = [];
+  if (!input.isLowerBound) active.push("age");
+  active.push("activity");
+  if (input.txSamplingAvailable) active.push("diversity", "wash");
+  active.push("dump");
+
+  const totalWeight = active.reduce((sum, k) => sum + WEIGHTS[k], 0);
+  const raw =
+    active.reduce((sum, k) => sum + components[k] * WEIGHTS[k], 0) / totalWeight;
+
+  const risk_score = Math.round(100 * clamp01(raw));
+  const risk_level: WalletRiskReport["risk_level"] =
+    risk_score > 66 ? "high" : risk_score >= 34 ? "medium" : "low";
+  const signals_total = Object.keys(WEIGHTS).length;
+  const signals_available = active.length;
+  const rpc_degraded = !input.txSamplingAvailable || input.isLowerBound;
+  const confidence: WalletRiskReport["confidence"] =
+    signals_available >= 5 ? "high" : signals_available >= 3 ? "medium" : "low";
+
+  return {
+    risk_score,
+    risk_level,
+    confidence,
+    signals_available,
+    signals_total,
+    rpc_degraded,
+    active_components: active,
+    components: mapValues(components, round2),
+  };
+}
+
 export async function scanWallet(
   address: string,
   opts: ScanOptions = {},
@@ -295,50 +375,27 @@ export async function scanWallet(
     "rug_history_flag is a heuristic proxy (very new + thin + concentrated). Definitive rug detection requires enriched data (e.g. Helius enhanced transactions / DAS) — see rules/risk-thresholds.md.",
   );
 
-  // --- components (0-1, pre-weight) ---
-  const components = {
-    age: ageRisk(ageDays),
-    activity: activityRisk(windowSigs.length, failedRatio),
-    diversity: diversityRisk(distinctPrograms),
-    wash: washScore,
-    dump: dumpScore,
-  };
+  const score = scoreWalletSignals({
+    ageDays,
+    isLowerBound,
+    txCount: windowSigs.length,
+    failedRatio,
+    distinctPrograms,
+    washScore,
+    dumpScore,
+    txSamplingAvailable,
+  });
 
-  // Maturity dampener: for clearly established/high-volume wallets, the wash and
-  // diversity signals (read from only a 25-tx sample) are noisy and false-positive
-  // on legit bots / power users who lean on one app. A wallet with a deep history
-  // has already proven it isn't a throwaway, so soften those two signals.
-  const established = isLowerBound || windowSigs.length >= 200;
-  if (established) {
-    components.wash *= 0.5;
-    components.diversity *= 0.5;
+  if (isLowerBound || windowSigs.length >= 200) {
     notes.push(
       "Established/high-volume wallet: wash + app-diversity signals softened (they are noisy on heavy wallets and would otherwise false-positive on legit power users).",
     );
   }
-
-  // Renormalize over only the available signals so a missing input doesn't
-  // silently drag the score toward zero.
-  // - Drop diversity + wash when tx sampling failed.
-  // - Drop age when we hit the signature cap: a busy wallet's recent history
-  //   doesn't reveal true age, so 0d here would be a false "brand new" penalty.
-  const active: (keyof typeof WEIGHTS)[] = [];
-  if (!isLowerBound) active.push("age");
-  active.push("activity");
-  if (txSamplingAvailable) active.push("diversity", "wash");
-  active.push("dump");
   if (isLowerBound) {
     notes.push(
       "Account age excluded from score: hit the signature cap, so true wallet age is unknown (the wallet is highly active). Age shown is a lower bound only.",
     );
   }
-  const totalWeight = active.reduce((sum, k) => sum + WEIGHTS[k], 0);
-  const raw =
-    active.reduce((sum, k) => sum + components[k] * WEIGHTS[k], 0) / totalWeight;
-
-  const risk_score = Math.round(100 * clamp01(raw));
-  const risk_level: WalletRiskReport["risk_level"] =
-    risk_score > 66 ? "high" : risk_score >= 34 ? "medium" : "low";
 
   // Heuristic rug proxy: very young + thin history + concentrated counterparty.
   const rug_history_flag =
@@ -346,8 +403,12 @@ export async function scanWallet(
 
   const report: WalletRiskReport = {
     address: pubkey.toBase58(),
-    risk_score,
-    risk_level,
+    risk_score: score.risk_score,
+    risk_level: score.risk_level,
+    confidence: score.confidence,
+    signals_available: score.signals_available,
+    signals_total: score.signals_total,
+    rpc_degraded: score.rpc_degraded,
     signals: {
       account_age_days: ageDays,
       account_age_is_lower_bound: isLowerBound,
@@ -358,8 +419,8 @@ export async function scanWallet(
       dump_behavior_score: round2(dumpScore),
       rug_history_flag,
     },
-    components: mapValues(components, round2),
-    summary: buildSummary(risk_level, risk_score, {
+    components: score.components,
+    summary: buildSummary(score.risk_level, score.risk_score, {
       ageDays,
       txCount: windowSigs.length,
       distinctPrograms,
@@ -459,6 +520,7 @@ function printHuman(r: WalletRiskReport) {
   console.log("");
   console.log(`Wallet:     ${r.address}`);
   console.log(`Risk:       ${r.risk_level.toUpperCase()} (${r.risk_score}/100)`);
+  console.log(`Confidence: ${r.confidence.toUpperCase()} (${r.signals_available}/${r.signals_total} signals${r.rpc_degraded ? ", RPC degraded" : ""})`);
   console.log("");
   console.log("Signals:");
   console.log(`  account age:        ${r.signals.account_age_days}d${r.signals.account_age_is_lower_bound ? "+" : ""}`);
