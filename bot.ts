@@ -138,7 +138,7 @@ function detailsBlock(r: WalletRiskReport): string[] {
     : `${s.account_age_days} day${s.account_age_days === 1 ? "" : "s"} old`;
 
   return [
-    "<b>📊 The data</b>",
+    "<b>The data</b>",
     `• Wallet: <code>${esc(r.address)}</code>`,
     `• Confidence: ${r.confidence} (${r.signals_available}/${r.signals_total} signals${r.rpc_degraded ? ", RPC degraded" : ""})`,
     `• Age: ${age}`,
@@ -162,7 +162,7 @@ function formatReport(r: WalletRiskReport): string {
     "",
     ...detailsBlock(r),
     "",
-    "<i>Quick gut-check from public Solana data, not financial advice. Always do your own research too. 💙</i>",
+    "<i>Quick gut-check from public Solana data, not financial advice. Always do your own research too.</i>",
   ];
   return lines.join("\n");
 }
@@ -222,10 +222,10 @@ function humanize(ms: number): string {
 
 function formatFlag(f: WatchFlag): string {
   const lines = [
-    `🚩 <b>New risky token just launched</b>`,
+    `⚠️ <b>New risky token just launched</b>`,
     `<code>${esc(shortAddr(f.mint))}</code>`,
     "",
-    ...f.reasons,
+    ...f.reasons.map((r) => `• ${r}`),
   ];
   return lines.join("\n");
 }
@@ -294,10 +294,10 @@ const noPreview = { link_preview_options: { is_disabled: true } } as const;
 
 // Tappable main menu so users don't have to know any commands.
 const mainMenu = Markup.inlineKeyboard([
-  [Markup.button.callback("🔍 Scan a wallet", "scan_prompt")],
-  [Markup.button.callback("🎬 See a quick demo", "demo")],
-  [Markup.button.callback("👀 Watch new tokens", "watch_menu")],
-  [Markup.button.callback("❓ How it works", "help")],
+  [Markup.button.callback("Scan a wallet", "scan_prompt")],
+  [Markup.button.callback("See a quick demo", "demo")],
+  [Markup.button.callback("Watch new tokens", "watch_menu")],
+  [Markup.button.callback("How it works", "help")],
 ]);
 
 const watchMenu = Markup.inlineKeyboard([
@@ -311,23 +311,23 @@ const watchMenu = Markup.inlineKeyboard([
 function welcomeText(name?: string): string {
   const who = name ? ` ${name}` : "";
   return (
-    `🔮 <b>Hey${who}! 👋</b>\n\n` +
-    "I'm <b>Scry</b>. I check Solana wallets and tokens so you don't get rugged.\n\n" +
+    `🔮 <b>Hey${who}.</b> I'm Scry.\n\n` +
+    "I check Solana wallets and tokens so you don't get rugged.\n\n" +
     "What would you like to do?"
   );
 }
 
 const HELP_TEXT =
-  "🔮 <b>How Scry works</b>\n\n" +
-  "🔍 <b>Scan a wallet</b> — paste any Solana address and I'll tell you, in plain English, whether it looks safe (0-100 risk score).\n\n" +
-  "🎬 <b>See a demo</b> — I scan one healthy wallet and one risky one so you can see the difference.\n\n" +
-  "👀 <b>Watch new tokens</b> — I watch new launches live and ping you when one looks like a rug or honeypot.\n\n" +
-  "<i>A gut-check from public Solana data, not financial advice.</i> 💙";
+  "<b>How Scry works</b>\n\n" +
+  "<b>Scan a wallet</b> — paste any Solana address and I'll tell you, in plain English, whether it looks safe (0-100 risk score).\n\n" +
+  "<b>See a demo</b> — I scan one healthy wallet and one risky one so you can see the difference.\n\n" +
+  "<b>Watch new tokens</b> — I watch new launches live and ping you when one looks like a rug or honeypot.\n\n" +
+  "<i>A gut-check from public Solana data, not financial advice.</i>";
 
 // Reusable flows so both commands and button taps share one code path.
 async function runDemo(ctx: any) {
   await ctx.replyWithHTML(
-    "Here are two real wallets so you can see the difference. 👇",
+    "Here are two real wallets so you can see the difference.",
     noPreview,
   );
   await ctx.replyWithChatAction("typing");
@@ -340,7 +340,7 @@ async function runDemo(ctx: any) {
   );
   await ctx.replyWithHTML(await handleScan(DEMO_RISKY), noPreview);
   await ctx.replyWithHTML(
-    "Want to check your own? Just paste any Solana wallet address. 🙂",
+    "Want to check your own? Just paste any Solana wallet address.",
     noPreview,
   );
 }
@@ -348,7 +348,7 @@ async function runDemo(ctx: any) {
 async function beginWatch(ctx: any, minutes: number) {
   const ms = Math.min(Math.max(minutes, 1), 60) * 60_000;
   await ctx.replyWithHTML(
-    `👀 Watching for risky new tokens for the next <b>${humanize(ms)}</b>.\n` +
+    `Watching for risky new tokens for the next <b>${humanize(ms)}</b>.\n` +
       "I'll ping you the moment I spot one. (Tap /stop to end early.)",
     noPreview,
   );
@@ -417,7 +417,7 @@ async function main() {
   bot.action("scan_prompt", async (ctx) => {
     await ctx.answerCbQuery();
     await ctx.replyWithHTML(
-      "👇 Paste any Solana wallet address and I'll check it for you.",
+      "Paste any Solana wallet address and I'll check it for you.",
       noPreview,
     );
   });
@@ -432,7 +432,7 @@ async function main() {
   bot.action("watch_menu", async (ctx) => {
     await ctx.answerCbQuery();
     await ctx.replyWithHTML(
-      "👀 How long should I watch for risky new tokens?",
+      "How long should I watch for risky new tokens?",
       { ...noPreview, ...watchMenu },
     );
   });

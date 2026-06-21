@@ -116,9 +116,9 @@ async function inspectToken(
 function tokenRedFlags(t: TokenRisk): string[] {
   const r: string[] = [];
   if (t.freeze_authority_active)
-    r.push("🚨 Can freeze your tokens (honeypot risk)");
+    r.push("Can freeze your tokens (honeypot risk)");
   if (t.mint_authority_active)
-    r.push("⚠️ Creator can still mint unlimited new supply");
+    r.push("Creator can still mint unlimited new supply");
   return r;
 }
 
