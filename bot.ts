@@ -301,11 +301,9 @@ const mainMenu = Markup.inlineKeyboard([
 ]);
 
 const watchMenu = Markup.inlineKeyboard([
-  [
-    Markup.button.callback("5 min", "watch:5"),
-    Markup.button.callback("30 min", "watch:30"),
-    Markup.button.callback("1 hour", "watch:60"),
-  ],
+  [Markup.button.callback("5 minutes", "watch:5")],
+  [Markup.button.callback("30 minutes", "watch:30")],
+  [Markup.button.callback("1 hour", "watch:60")],
 ]);
 
 function welcomeText(name?: string): string {
@@ -450,6 +448,15 @@ async function main() {
   bot.command("demo", (ctx) => runDemo(ctx));
   bot.command("watch", async (ctx) => {
     const arg = ctx.message.text.replace(/^\/watch(@\w+)?/, "").trim();
+    // No duration given -> show the same picker the button shows (consistent).
+    if (!arg) {
+      await ctx.replyWithHTML(
+        "👀 How long should I watch for risky new tokens?",
+        { ...noPreview, ...watchMenu },
+      );
+      return;
+    }
+    // Explicit duration (e.g. /watch 30m) -> start straight away.
     const { ms, label } = parseDuration(arg);
     await ctx.replyWithHTML(
       `👀 Watching for risky new tokens for the next <b>${label}</b>.\n` +
