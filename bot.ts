@@ -19,13 +19,8 @@ import { Telegraf, Markup } from "telegraf";
 // Vendored copy of the skill's scorer so the bot is self-contained and
 // deployable on its own. Refresh it with `npm run sync-scorer`.
 import { scanWallet, WalletRiskReport } from "./scorer/scan_wallet.ts";
-import {
-  watchDeployments,
-  WatchController,
-  WatchFlag,
-  scanToken,
-  TokenRisk,
-} from "./watcher.ts";
+import { watchDeployments, WatchController, WatchFlag } from "./watcher.ts";
+import { scanTokenFull, TokenReport } from "./tokenscan.ts";
 
 const ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
@@ -177,35 +172,58 @@ function formatReport(r: WalletRiskReport): string {
 // Token report (when the pasted address is a token mint, not a wallet)
 // ---------------------------------------------------------------------------
 
-function formatTokenReport(mint: string, t: TokenRisk): string {
+function fmtUsd(n: number | null): string {
+  if (n == null) return "—";
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}k`;
+  return `$${Math.round(n)}`;
+}
+const pct = (n: number) => `${Math.round(n * 100)}%`;
+
+function formatTokenReport(t: TokenReport): string {
   let score = 0;
   if (t.freeze_authority_active) score += 50;
-  if (t.mint_authority_active) score += 30;
-  if (t.top_holder_pct >= 0.9) score += 20;
-  else if (t.top_holder_pct >= 0.5) score += 10;
+  if (t.mint_authority_active) score += 25;
+  if ((t.deployer_risk_score ?? 0) >= 67) score += 20;
+  if (t.has_market && t.liquidity_usd != null && t.liquidity_usd < 1000) score += 15;
+  if (t.has_market && t.top10_pct >= 0.9) score += 10;
 
   const head =
     score >= 50 ? "🔴 Risky token" : score >= 25 ? "🟡 Some risk" : "🟢 Looks clean";
   const sub =
     score >= 50
-      ? "The creator kept powers that can be used to rug holders."
+      ? "Multiple red flags. Treat with caution."
       : score >= 25
-        ? "The creator kept at least one power worth knowing about."
-        : "The creator gave up the powers that enable rugs.";
+        ? "Worth a closer look before you ape in."
+        : "No obvious rug flags, but always DYOR.";
 
-  const pct = Math.round(t.top_holder_pct * 100);
   const bad: string[] = [];
   const good: string[] = [];
+
   if (t.freeze_authority_active)
     bad.push("⚠️  Creator can freeze your tokens (you couldn't sell — honeypot risk)");
   else good.push("✅  Can't freeze your tokens (freeze authority revoked)");
   if (t.mint_authority_active)
     bad.push("⚠️  Creator can still mint unlimited new supply (can dilute you)");
   else good.push("✅  Supply is capped (mint authority revoked)");
-  if (t.top_holder_pct >= 0.9)
-    bad.push(`⚠️  ~${pct}% of supply sits in one wallet (normal right after launch, risky once trading)`);
-  else if (t.top_holder_pct >= 0.5)
-    bad.push(`⚠️  ~${pct}% of supply held by one wallet`);
+
+  if (!t.has_market)
+    bad.push("⚠️  No liquidity pool found — not really tradeable yet");
+  else if (t.liquidity_usd != null && t.liquidity_usd < 1000)
+    bad.push(`⚠️  Almost no liquidity (${fmtUsd(t.liquidity_usd)}) — you may not be able to sell`);
+  else if (t.liquidity_usd != null && t.liquidity_usd >= 10_000)
+    good.push(`✅  Real liquidity (${fmtUsd(t.liquidity_usd)})`);
+
+  if (t.has_market && t.top10_pct >= 0.9)
+    bad.push(`⚠️  ~${pct(t.top10_pct)} of supply in the top 10 holders (incl. the pool)`);
+
+  if ((t.deployer_risk_score ?? -1) >= 67)
+    bad.push(`⚠️  Deployer wallet is high-risk (${t.deployer_risk_score}/100)`);
+  else if (t.deployer_risk_score != null && t.deployer_risk_score < 34)
+    good.push(`✅  Deployer wallet looks clean (${t.deployer_risk_score}/100)`);
+
+  const ageStr =
+    t.age_days == null ? "—" : t.age_days < 1 ? "today" : `${t.age_days} days`;
 
   const lines = [
     `<b>${head}</b>`,
@@ -216,17 +234,25 @@ function formatTokenReport(mint: string, t: TokenRisk): string {
     ...good,
     "",
     "<b>📊 The data</b>",
-    `• Token: <code>${esc(mint)}</code>`,
+    `• Token: <code>${esc(t.mint)}</code>`,
+    `• Liquidity: ${t.has_market ? fmtUsd(t.liquidity_usd) : "no market yet"}`,
+    `• Market cap: ${fmtUsd(t.market_cap_usd)}`,
+    `• 24h volume: ${fmtUsd(t.volume_24h_usd)}`,
+    `• Age: ${ageStr}`,
+    `• Holders: ${t.holder_count == null ? "—" : t.holder_count >= 1000 ? "1000+" : t.holder_count}`,
+    `• Top holder: ${pct(t.top_holder_pct)}  ·  Top 10: ${pct(t.top10_pct)} (incl. pool)`,
     `• Freeze authority: ${t.freeze_authority_active ? "active" : "revoked"}`,
     `• Mint authority: ${t.mint_authority_active ? "active" : "revoked"}`,
-    `• Largest holder: ${pct}% of supply`,
   ];
-  if (t.freeze_authority_active || t.mint_authority_active) {
+  if (t.deployer)
+    lines.push(
+      `• Deployer: <code>${esc(shortAddr(t.deployer))}</code>${t.deployer_risk_level ? ` — ${t.deployer_risk_level.toUpperCase()} ${t.deployer_risk_score}/100` : ""}`,
+    );
+  if (t.freeze_authority_active || t.mint_authority_active)
     lines.push(
       "",
       "<i>Note: a few legit tokens (e.g. regulated stablecoins) keep these powers on purpose. For a random new token, they're red flags.</i>",
     );
-  }
   lines.push(
     "",
     "<i>On-chain facts, not financial advice. Always do your own research too.</i>",
@@ -241,8 +267,8 @@ async function handleScan(rawAddress: string): Promise<string> {
   }
   try {
     // If it's a token mint, give the token rug check; otherwise score the wallet.
-    const token = await scanToken(address, process.env.SOLANA_RPC_URL);
-    if (token) return formatTokenReport(address, token);
+    const token = await scanTokenFull(address, process.env.SOLANA_RPC_URL);
+    if (token) return formatTokenReport(token);
     const report = await scanWallet(address, {
       rpcUrl: process.env.SOLANA_RPC_URL,
     });
