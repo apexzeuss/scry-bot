@@ -138,7 +138,7 @@ function detailsBlock(r: WalletRiskReport): string[] {
     : `${s.account_age_days} day${s.account_age_days === 1 ? "" : "s"} old`;
 
   return [
-    "<b>The data</b>",
+    "<b>📊 The data</b>",
     `• Wallet: <code>${esc(r.address)}</code>`,
     `• Confidence: ${r.confidence} (${r.signals_available}/${r.signals_total} signals${r.rpc_degraded ? ", RPC degraded" : ""})`,
     `• Age: ${age}`,
@@ -294,9 +294,9 @@ const noPreview = { link_preview_options: { is_disabled: true } } as const;
 
 // Tappable main menu so users don't have to know any commands.
 const mainMenu = Markup.inlineKeyboard([
-  [Markup.button.callback("Scan a wallet", "scan_prompt")],
+  [Markup.button.callback("🔍 Scan a wallet", "scan_prompt")],
   [Markup.button.callback("See a quick demo", "demo")],
-  [Markup.button.callback("Watch new tokens", "watch_menu")],
+  [Markup.button.callback("👀 Watch new tokens", "watch_menu")],
   [Markup.button.callback("How it works", "help")],
 ]);
 
@@ -340,7 +340,7 @@ async function runDemo(ctx: any) {
   );
   await ctx.replyWithHTML(await handleScan(DEMO_RISKY), noPreview);
   await ctx.replyWithHTML(
-    "Want to check your own? Just paste any Solana wallet address.",
+    "👇 Want to check your own? Just paste any Solana wallet address.",
     noPreview,
   );
 }
@@ -348,7 +348,7 @@ async function runDemo(ctx: any) {
 async function beginWatch(ctx: any, minutes: number) {
   const ms = Math.min(Math.max(minutes, 1), 60) * 60_000;
   await ctx.replyWithHTML(
-    `Watching for risky new tokens for the next <b>${humanize(ms)}</b>.\n` +
+    `👀 Watching for risky new tokens for the next <b>${humanize(ms)}</b>.\n` +
       "I'll ping you the moment I spot one. (Tap /stop to end early.)",
     noPreview,
   );
@@ -417,7 +417,7 @@ async function main() {
   bot.action("scan_prompt", async (ctx) => {
     await ctx.answerCbQuery();
     await ctx.replyWithHTML(
-      "Paste any Solana wallet address and I'll check it for you.",
+      "👇 Paste any Solana wallet address and I'll check it for you.",
       noPreview,
     );
   });
@@ -432,7 +432,7 @@ async function main() {
   bot.action("watch_menu", async (ctx) => {
     await ctx.answerCbQuery();
     await ctx.replyWithHTML(
-      "How long should I watch for risky new tokens?",
+      "👀 How long should I watch for risky new tokens?",
       { ...noPreview, ...watchMenu },
     );
   });
