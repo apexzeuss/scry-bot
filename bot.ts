@@ -23,6 +23,9 @@ import { watchDeployments, WatchController, WatchFlag } from "./watcher.ts";
 import { scanTokenFull, TokenReport } from "./tokenscan.ts";
 
 const ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+// A truncated/display address like "ARa3kU…stoPNe" (ellipsis or "..." in the middle).
+const SHORT_ADDR_RE =
+  /^[1-9A-HJ-NP-Za-km-z]{2,}(?:…|\.{2,})[1-9A-HJ-NP-Za-km-z]{2,}$/;
 
 // Curated examples for /demo so anyone can see the value with zero setup.
 const DEMO_SAFE = "8VRnS42EtHKv2xLvTeABZypUjjAdbJ6KHZciB1RoWbLy"; // deep, organic history
@@ -336,9 +339,11 @@ function humanize(ms: number): string {
 function formatFlag(f: WatchFlag): string {
   const lines = [
     `⚠️ <b>New risky token just launched</b>`,
-    `<code>${esc(shortAddr(f.mint))}</code>`,
+    `<code>${esc(f.mint)}</code>`,
     "",
     ...f.reasons.map((r) => `• ${r}`),
+    "",
+    "<i>Tap the address to copy it, then send it to me for the full report.</i>",
   ];
   return lines.join("\n");
 }
@@ -599,10 +604,19 @@ async function main() {
     await ctx.reply(was ? "🛑 Stopped watching." : "Nothing was running. 🙂");
   });
 
-  // Bare wallet address (no command) -> just scan it.
+  // Bare wallet/token address (no command) -> just scan it.
   bot.hears(ADDRESS_RE, async (ctx) => {
     await ctx.replyWithChatAction("typing");
     await ctx.replyWithHTML(await handleScan(ctx.message.text), noPreview);
+  });
+
+  // A shortened/truncated address (e.g. "ARa3kU…stoPNe") can't be scanned.
+  bot.hears(SHORT_ADDR_RE, async (ctx) => {
+    await ctx.replyWithHTML(
+      'That looks like a <b>shortened</b> address (the "…" means the middle is cut off), so I can\'t scan it, the full address is missing.\n\n' +
+        "Copy the <b>full</b> address instead: tap and hold it where you found it, or open the token on solscan.io and copy it there.",
+      noPreview,
+    );
   });
 
   await bot.launch(() => console.log("Bot is running. Press Ctrl-C to stop."));
