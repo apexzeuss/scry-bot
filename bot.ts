@@ -251,15 +251,6 @@ function formatTokenReport(t: TokenReport): string {
     lines.push(
       `• Deployer: <code>${esc(shortAddr(t.deployer))}</code>${t.deployer_risk_level ? ` — ${t.deployer_risk_level.toUpperCase()} ${t.deployer_risk_score}/100` : ""}`,
     );
-  if (t.freeze_authority_active || t.mint_authority_active)
-    lines.push(
-      "",
-      "<i>Note: a few legit tokens (e.g. regulated stablecoins) keep these powers on purpose. For a random new token, they're red flags.</i>",
-    );
-  lines.push(
-    "",
-    "<i>On-chain facts, not financial advice. Always do your own research too.</i>",
-  );
   return lines.join("\n");
 }
 
